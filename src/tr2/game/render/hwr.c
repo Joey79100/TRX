@@ -12,6 +12,8 @@
 #include <libtrx/memory.h>
 #include <libtrx/utils.h>
 
+#define PALETTE_8 1
+
 #define MAKE_DEPTH_FROM_RHW(rhw) (g_FltResZBuf - g_FltResZORhw * (rhw))
 #define MAKE_DEPTH(v) MAKE_DEPTH_FROM_RHW((v)->rhw)
 
@@ -31,6 +33,7 @@ typedef struct {
     int32_t texture_map[GFX_MAX_TEXTURES];
     int32_t env_map_texture;
     int32_t current_texture;
+    GFX_COLOR palette[256];
 } M_PRIV;
 
 static VERTEX_INFO m_VBuffer[32] = {};
@@ -43,6 +46,8 @@ static void M_ShadeColor(
     uint8_t alpha);
 static void M_ShadeLight(
     GFX_3D_VERTEX *target, uint32_t shade, bool is_textured);
+static void M_ShadeColor8(
+    GFX_3D_VERTEX *target, int32_t palette_idx, int32_t shade, uint8_t alpha);
 static void M_ShadeLightColor(
     GFX_3D_VERTEX *target, uint32_t shade, bool is_textured, uint32_t red,
     uint32_t green, uint32_t blue, uint8_t alpha);
@@ -58,14 +63,12 @@ static void M_DrawPrimitive(
     const GFX_3D_VERTEX *vertices, int32_t vtx_count, bool is_no_clip);
 static void M_DrawPolyTextured(RENDERER *renderer, int32_t vtx_count);
 static void M_DrawPolyFlat(
-    RENDERER *renderer, int32_t vtx_count, int32_t red, int32_t green,
-    int32_t blue);
+    RENDERER *renderer, int32_t vtx_count, int32_t palette_idx);
 
 static void M_InsertPolyTextured(
     int32_t vtx_count, const float z, int16_t poly_type, int16_t tex_page);
 static void M_InsertPolyFlat(
-    int32_t vtx_count, const float z, int32_t red, int32_t green, int32_t blue,
-    int16_t poly_type);
+    int32_t vtx_count, const float z, int32_t palette_idx, int16_t poly_type);
 
 static void M_InsertGT3_Sorted(
     RENDERER *renderer, const PHD_VBUF *vtx0, const PHD_VBUF *vtx1,
@@ -155,6 +158,17 @@ static void M_ShadeLight(
     M_ShadeLightColor(target, shade, is_textured, 255, 255, 255, 255);
 }
 
+static void M_ShadeColor8(
+    GFX_3D_VERTEX *const target, const int32_t palette_idx, const int32_t shade,
+    const uint8_t alpha)
+{
+    target->r = palette_idx & 0xFF;
+    target->g =
+        (0x1FFF - shade) * 255.0f / (float)0x1D00; // TODO: why not 0x2000?
+    target->b = 0;
+    target->a = alpha;
+}
+
 static void M_ShadeLightColor(
     GFX_3D_VERTEX *const target, uint32_t shade, const bool is_textured,
     uint32_t red, uint32_t green, uint32_t blue, const uint8_t alpha)
@@ -212,9 +226,18 @@ static void M_LoadTexturePages(RENDERER *renderer)
     const int32_t pages_count = Output_GetTexturePageCount();
     for (int32_t i = 0; i < pages_count; i++) {
         GFX_2D_SURFACE *const surface = priv->surface_tex[i];
+#if PALETTE_8
+        const uint8_t *input_ptr = Output_GetTexturePage8(i);
+        RGBA_8888 *output_ptr = (RGBA_8888 *)surface->buffer;
+        for (int32_t i = 0; i < TEXTURE_PAGE_SIZE; i++) {
+            output_ptr->r = *input_ptr++;
+            output_ptr++;
+        }
+#else
         const RGBA_8888 *input_ptr = Output_GetTexturePage32(i);
         RGBA_8888 *output_ptr = (RGBA_8888 *)surface->buffer;
         memcpy(output_ptr, input_ptr, TEXTURE_PAGE_SIZE * sizeof(RGBA_8888));
+#endif
 
         priv->texture_map[i] = GFX_3D_Renderer_RegisterTexturePage(
             priv->renderer_3d, surface->buffer, surface->desc.width,
@@ -277,15 +300,22 @@ static void M_DrawPolyTextured(
         vbuf_gl->s = vbuf->tex.u / vbuf->rhw / 65536.0f;
         vbuf_gl->tex_coord[2] = vbuf->tex.z;
         vbuf_gl->tex_coord[3] = vbuf->tex.w;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, 0, vbuf->g, 0xFF);
+#else
         M_ShadeLight(vbuf_gl, vbuf->g, true);
+#endif
     }
     M_DrawPrimitive(renderer, GFX_3D_PRIM_TRI, m_VBufferGL, vtx_count, true);
 }
 
 static void M_DrawPolyFlat(
-    RENDERER *const renderer, const int32_t vtx_count, const int32_t red,
-    const int32_t green, const int32_t blue)
+    RENDERER *const renderer, const int32_t vtx_count,
+    const int32_t palette_idx)
 {
+#if !PALETTE_8
+    const RGB_888 color = Output_GetPaletteColor16(palette_idx >> 8);
+#endif
     for (int32_t i = 0; i < vtx_count; i++) {
         const VERTEX_INFO *const vbuf = &m_VBuffer[i];
         GFX_3D_VERTEX *const vbuf_gl = &m_VBufferGL[i];
@@ -293,7 +323,12 @@ static void M_DrawPolyFlat(
         vbuf_gl->y = vbuf->pos.y;
         vbuf_gl->z = MAKE_DEPTH(vbuf);
         vbuf_gl->w = vbuf->rhw;
-        M_ShadeLightColor(vbuf_gl, vbuf->g, false, red, green, blue, 0xFF);
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, palette_idx, vbuf->g, 0xFF);
+#else
+        M_ShadeLightColor(
+            vbuf_gl, vbuf->g, false, color.r, color.g, color.b, 0xFF);
+#endif
     }
     M_DrawPrimitive(renderer, GFX_3D_PRIM_TRI, m_VBufferGL, vtx_count, true);
 }
@@ -323,7 +358,11 @@ static void M_InsertPolyTextured(
         vbuf_gl->t = vbuf->tex.v / vbuf->rhw / 65536.0f;
         vbuf_gl->tex_coord[2] = vbuf->tex.z;
         vbuf_gl->tex_coord[3] = vbuf->tex.w;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, 0, vbuf->g, 0xFF);
+#else
         M_ShadeLight(vbuf_gl, vbuf->g, true);
+#endif
     }
 
     m_HWR_VertexPtr += vtx_count;
@@ -331,9 +370,13 @@ static void M_InsertPolyTextured(
 }
 
 static void M_InsertPolyFlat(
-    const int32_t vtx_count, const float z, const int32_t red,
-    const int32_t green, const int32_t blue, const int16_t poly_type)
+    const int32_t vtx_count, const float z, const int32_t palette_idx,
+    const int16_t poly_type)
 {
+#if !PALETTE_8
+    const RGB_888 color = Output_GetPaletteColor16(palette_idx >> 8);
+#endif
+
     g_Sort3DPtr->_0 = g_Info3DPtr;
     g_Sort3DPtr->_1 = MAKE_ZSORT(z);
     g_Sort3DPtr++;
@@ -350,9 +393,15 @@ static void M_InsertPolyFlat(
         vbuf_gl->y = vbuf->pos.y;
         vbuf_gl->z = MAKE_DEPTH(vbuf);
         vbuf_gl->w = vbuf->rhw;
-        M_ShadeLightColor(
-            vbuf_gl, vbuf->g, false, red, green, blue,
+#if PALETTE_8
+        M_ShadeColor8(
+            vbuf_gl, palette_idx, vbuf->g,
             poly_type == POLY_HWR_TRANS ? 0x80 : 0xFF);
+#else
+        M_ShadeLightColor(
+            vbuf_gl, vbuf->g, false, color.r, color.g, color.b,
+            poly_type == POLY_HWR_TRANS ? 0x80 : 0xFF);
+#endif
     }
 
     m_HWR_VertexPtr += vtx_count;
@@ -406,7 +455,11 @@ static void M_InsertGT3_Sorted(
                 vbuf_gl->t = (double)uv[i]->v / 65536.0f;
                 vbuf_gl->tex_coord[2] = vtx[i]->tex.z;
                 vbuf_gl->tex_coord[3] = vtx[i]->tex.w;
+#if PALETTE_8
+                M_ShadeColor8(vbuf_gl, 0, vtx[i]->g, 0xFF);
+#else
                 M_ShadeLight(vbuf_gl, vtx[i]->g, true);
+#endif
             }
 
             m_HWR_VertexPtr += 3;
@@ -499,7 +552,11 @@ static void M_InsertGT4_Sorted(
                 vbuf_gl->t = texture->uv[i].v / 65536.0f;
                 vbuf_gl->tex_coord[2] = vtx[i]->tex.z;
                 vbuf_gl->tex_coord[3] = vtx[i]->tex.w;
+#if PALETTE_8
+                M_ShadeColor8(vbuf_gl, 0, vtx[i]->g, 0xFF);
+#else
                 M_ShadeLight(vbuf_gl, vtx[i]->g, true);
+#endif
             }
 
             m_HWR_VertexPtr += 4;
@@ -593,11 +650,9 @@ static void M_InsertFlatFace3s_Sorted(
             continue;
         }
 
-        const RGB_888 color = Output_GetPaletteColor16(face->palette_idx >> 8);
         const double zv = Render_CalculatePolyZ(
             sort_type, vtx[0]->zv, vtx[1]->zv, vtx[2]->zv, -1.0);
-        M_InsertPolyFlat(
-            num_points, zv, color.r, color.g, color.b, POLY_HWR_GOURAUD);
+        M_InsertPolyFlat(num_points, zv, face->palette_idx, POLY_HWR_GOURAUD);
     }
 }
 
@@ -670,11 +725,9 @@ static void M_InsertFlatFace4s_Sorted(
             continue;
         }
 
-        const RGB_888 color = Output_GetPaletteColor16(face->palette_idx >> 8);
         const double zv = Render_CalculatePolyZ(
             sort_type, vtx[0]->zv, vtx[1]->zv, vtx[2]->zv, vtx[3]->zv);
-        M_InsertPolyFlat(
-            num_points, zv, color.r, color.g, color.b, POLY_HWR_GOURAUD);
+        M_InsertPolyFlat(num_points, zv, face->palette_idx, POLY_HWR_GOURAUD);
     }
 }
 
@@ -771,7 +824,6 @@ static void M_InsertFlatRect_Sorted(
     *(GFX_3D_VERTEX **)g_Info3DPtr = m_HWR_VertexPtr;
     g_Info3DPtr += sizeof(GFX_3D_VERTEX *) / sizeof(int16_t);
 
-    const RGB_888 color = Output_GetPaletteColor8(color_idx);
     const double rhw = g_RhwFactor / (double)z;
     const double sz = MAKE_DEPTH_FROM_RHW(rhw);
 
@@ -788,7 +840,12 @@ static void M_InsertFlatRect_Sorted(
         GFX_3D_VERTEX *const vbuf_gl = &m_HWR_VertexPtr[i];
         vbuf_gl->z = sz;
         vbuf_gl->w = rhw;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, color_idx, 0x1000, 0xFF);
+#else
+        const RGB_888 color = Output_GetPaletteColor8(color_idx);
         M_ShadeColor(vbuf_gl, color.r, color.g, color.b, 0xFF);
+#endif
     }
 
     m_HWR_VertexPtr += 4;
@@ -799,7 +856,6 @@ static void M_InsertLine_Sorted(
     RENDERER *const renderer, const int32_t x1, const int32_t y1,
     const int32_t x2, const int32_t y2, int32_t z, const uint8_t color_idx)
 {
-    const RGB_888 color = Output_GetPaletteColor8(color_idx);
     const double rhw = g_RhwFactor / (double)z;
     const double sz = MAKE_DEPTH_FROM_RHW(rhw);
 
@@ -821,7 +877,12 @@ static void M_InsertLine_Sorted(
         GFX_3D_VERTEX *const vbuf_gl = &m_HWR_VertexPtr[i];
         vbuf_gl->z = sz;
         vbuf_gl->w = rhw;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, color_idx, 0x1000, 0xFF);
+#else
+        const RGB_888 color = Output_GetPaletteColor16(color_idx);
         M_ShadeColor(vbuf_gl, color.r, color.g, color.b, 0xFF);
+#endif
     }
 
     m_HWR_VertexPtr += 2;
@@ -984,8 +1045,7 @@ static void M_InsertTransOctagon_Sorted(
     }
     poly_z /= num_vtx;
 
-    M_InsertPolyFlat(
-        num_points, (double)(poly_z - 0x20000), 0, 0, 0, POLY_HWR_TRANS);
+    M_InsertPolyFlat(num_points, (double)(poly_z - 0x20000), 0, POLY_HWR_TRANS);
 }
 
 static void M_InsertGT3_ZBuffered(
@@ -1020,7 +1080,11 @@ static void M_InsertGT3_ZBuffered(
                 vbuf_gl->t = (double)uv[i]->v / 65536.0f;
                 vbuf_gl->tex_coord[2] = vtx[i]->tex.z;
                 vbuf_gl->tex_coord[3] = vtx[i]->tex.w;
+#if PALETTE_8
+                M_ShadeColor8(vbuf_gl, 0, vtx[i]->g, 0xFF);
+#else
                 M_ShadeLight(vbuf_gl, vtx[i]->g, true);
+#endif
             }
 
             M_SelectTexture(renderer, texture->tex_page);
@@ -1114,7 +1178,11 @@ static void M_InsertGT4_ZBuffered(
         vbuf_gl->t = texture->uv[i].v / 65536.0f;
         vbuf_gl->tex_coord[2] = vtx[i]->tex.z;
         vbuf_gl->tex_coord[3] = vtx[i]->tex.w;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, 0, vtx[i]->g, 0xFF);
+#else
         M_ShadeLight(vbuf_gl, vtx[i]->g, true);
+#endif
     }
 
     M_SelectTexture(renderer, texture->tex_page);
@@ -1190,8 +1258,7 @@ static void M_InsertFlatFace3s_ZBuffered(
             continue;
         }
 
-        const RGB_888 color = Output_GetPaletteColor16(face->palette_idx >> 8);
-        M_DrawPolyFlat(renderer, num_points, color.r, color.g, color.b);
+        M_DrawPolyFlat(renderer, num_points, face->palette_idx);
     }
 }
 
@@ -1266,8 +1333,7 @@ static void M_InsertFlatFace4s_ZBuffered(
             continue;
         }
 
-        const RGB_888 color = Output_GetPaletteColor16(face->palette_idx >> 8);
-        M_DrawPolyFlat(renderer, num_points, color.r, color.g, color.b);
+        M_DrawPolyFlat(renderer, num_points, face->palette_idx);
     }
 }
 
@@ -1363,8 +1429,6 @@ static void M_InsertFlatRect_ZBuffered(
     const double rhw = g_RhwFactor / (double)z;
     const double sz = MAKE_DEPTH_FROM_RHW(rhw);
 
-    const RGB_888 color = Output_GetPaletteColor8(color_idx);
-
     m_VBufferGL[0].x = x1;
     m_VBufferGL[0].y = y1;
     m_VBufferGL[1].x = x2;
@@ -1377,7 +1441,12 @@ static void M_InsertFlatRect_ZBuffered(
         GFX_3D_VERTEX *const vbuf_gl = &m_VBufferGL[i];
         vbuf_gl->z = sz;
         vbuf_gl->w = rhw;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, color_idx, 0x1000, 0xFF);
+#else
+        const RGB_888 color = Output_GetPaletteColor8(color_idx);
         M_ShadeColor(vbuf_gl, color.r, color.g, color.b, 0xFF);
+#endif
     }
 
     M_SelectTexture(renderer, -1);
@@ -1396,7 +1465,6 @@ static void M_InsertLine_ZBuffered(
 
     const double rhw = g_RhwFactor / (double)z;
     const double sz = MAKE_DEPTH_FROM_RHW(rhw);
-    const RGB_888 color = Output_GetPaletteColor8(color_idx);
 
     m_VBufferGL[0].x = x1;
     m_VBufferGL[0].y = y1;
@@ -1406,7 +1474,12 @@ static void M_InsertLine_ZBuffered(
         GFX_3D_VERTEX *const vbuf_gl = &m_VBufferGL[i];
         vbuf_gl->z = sz;
         vbuf_gl->w = rhw;
+#if PALETTE_8
+        M_ShadeColor8(vbuf_gl, color_idx, 0x1000, 0xFF);
+#else
+        const RGB_888 color = Output_GetPaletteColor8(color_idx);
         M_ShadeColor(vbuf_gl, color.r, color.g, color.b, 0xFF);
+#endif
     }
 
     M_SelectTexture(renderer, -1);
@@ -1439,6 +1512,8 @@ static void M_ResetFuncPtrs(RENDERER *const renderer)
 static void M_ResetParams(RENDERER *const renderer)
 {
     M_PRIV *const priv = renderer->priv;
+    GFX_3D_Renderer_SetDithering(
+        priv->renderer_3d, g_Config.rendering.enable_dithering);
     GFX_3D_Renderer_SetBrightnessMultiplier(
         priv->renderer_3d,
         g_Config.rendering.lighting_contrast == LIGHTING_CONTRAST_LOW ? 1.0
@@ -1561,6 +1636,20 @@ static void M_Reset(RENDERER *const renderer, const RENDER_RESET_FLAGS flags)
         M_ResetParams(renderer);
     }
     M_ResetFuncPtrs(renderer);
+
+#if PALETTE_8
+    if (flags & RENDER_RESET_PALETTE) {
+        for (int32_t i = 0; i < 256; i++) {
+            const RGB_888 rgb = Output_GetPaletteColor8(i);
+            priv->palette[i].r = rgb.r;
+            priv->palette[i].g = rgb.g;
+            priv->palette[i].b = rgb.b;
+        }
+        LIGHT_MAP *const light_map = Output_GetLightMap(0);
+        GFX_3D_Renderer_SetPalette(
+            priv->renderer_3d, priv->palette, 256, &light_map[0].index[0], 32);
+    }
+#endif
 }
 
 static void M_ResetPolyList(RENDERER *const renderer)

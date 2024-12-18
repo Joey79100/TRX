@@ -321,6 +321,7 @@ static void M_HandleConfigChange(const EVENT *const event, void *const data)
     } else if (
         CHANGED(rendering.enable_zbuffer)
         || CHANGED(rendering.enable_perspective_filter)
+        || CHANGED(rendering.enable_dithering)
         || CHANGED(rendering.enable_wireframe)
         || CHANGED(rendering.wireframe_width)
         || CHANGED(rendering.texture_filter)
