@@ -79,7 +79,6 @@
 #define COMBAT_DISTANCE (WALL_L * 5 / 2) // = 2560
 #define MAX_ELEVATION (85 * DEG_1) // = 15470
 #define DEFAULT_RADIUS 10
-#define UNIT_SHADOW 256
 #define NO_BAD_POS (-NO_HEIGHT)
 #define NO_BAD_NEG NO_HEIGHT
 #define BAD_JUMP_CEILING ((STEP_L * 3) / 4) // = 192

@@ -130,7 +130,7 @@ void Creature_AIInfo(ITEM *const item, AI_INFO *const info)
         && ABS(enemy->pos.y - item->pos.y) <= STEP_L;
 }
 
-void Creature_Mood(const ITEM *item, const AI_INFO *info, int32_t violent)
+void Creature_Mood(const ITEM *item, const AI_INFO *info, bool violent)
 {
     CREATURE *const creature = item->data;
     if (creature == nullptr) {
@@ -372,7 +372,7 @@ void Creature_Die(const int16_t item_num, const bool explode)
     }
 }
 
-int32_t Creature_Animate(
+bool Creature_Animate(
     const int16_t item_num, const int16_t angle, const int16_t tilt)
 {
     ITEM *const item = Item_Get(item_num);

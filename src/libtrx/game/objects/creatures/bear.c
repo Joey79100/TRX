@@ -1,15 +1,11 @@
+#include "config.h"
 #include "game/creature.h"
 #include "game/items.h"
 #include "game/lara/common.h"
-#include "game/lot.h"
+#include "game/pathing.h"
 #include "game/random.h"
 #include "game/spawn.h"
-#include "global/const.h"
-#include "global/types.h"
-#include "global/vars.h"
-
-#include <libtrx/config.h>
-#include <libtrx/utils.h>
+#include "utils.h"
 
 #define BEAR_CHARGE_DAMAGE 3
 #define BEAR_SLAM_DAMAGE 200
@@ -43,7 +39,11 @@ typedef enum {
     BEAR_STATE_DEATH = 9,
 } BEAR_STATE;
 
+#if TR_VERSION == 1
 static BITE m_BearHeadBite = { 0, 96, 335, 14 };
+#else
+static BITE m_BearHeadBite = { .pos = { 0, 96, 335 }, .mesh_num = 14 };
+#endif
 
 static void M_Setup(OBJECT *obj);
 static void M_Control(int16_t item_num);
@@ -73,7 +73,12 @@ static void M_Control(const int16_t item_num)
 {
     ITEM *const item = Item_Get(item_num);
     OBJECT *const obj = Object_Get(item->object_id);
-    obj->pivot_length = g_Config.gameplay.fix_bear_ai ? 0 : 500;
+#if TR_VERSION == 1
+    const bool fix_bear_ai = g_Config.gameplay.fix_bear_ai;
+#else
+    const bool fix_bear_ai = false;
+#endif
+    obj->pivot_length = fix_bear_ai ? 0 : 500;
 
     if (item->status == IS_INVISIBLE) {
         if (!LOT_EnableBaddieAI(item_num, 0)) {
@@ -84,7 +89,7 @@ static void M_Control(const int16_t item_num)
 
     CREATURE *bear = (CREATURE *)item->data;
     int16_t head = 0;
-    PHD_ANGLE angle = 0;
+    int16_t angle = 0;
 
     if (item->hit_points <= 0) {
         angle = Creature_Turn(item, DEG_1);
@@ -128,7 +133,7 @@ static void M_Control(const int16_t item_num)
 
         angle = Creature_Turn(item, bear->maximum_turn);
 
-        int dead_enemy = g_LaraItem->hit_points <= 0;
+        int dead_enemy = Lara_GetItem()->hit_points <= 0;
         if (item->hit_status) {
             bear->flags = 1;
         }
@@ -194,8 +199,7 @@ static void M_Control(const int16_t item_num)
             } else if (
                 info.bite
                 && info.distance
-                    < (g_Config.gameplay.fix_bear_ai ? BEAR_FIX_PAT_RANGE
-                                                     : BEAR_PAT_RANGE)) {
+                    < (fix_bear_ai ? BEAR_FIX_PAT_RANGE : BEAR_PAT_RANGE)) {
                 item->goal_anim_state = BEAR_STATE_ATTACK_2;
             } else {
                 item->goal_anim_state = BEAR_STATE_WALK;
@@ -245,4 +249,6 @@ static void M_Control(const int16_t item_num)
     Creature_Animate(item_num, angle, 0);
 }
 
+#if TR_VERSION == 1
 REGISTER_OBJECT(O_BEAR, M_Setup)
+#endif
