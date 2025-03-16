@@ -11,6 +11,7 @@
 #include "game/game_string.h"
 #include "game/input.h"
 #include "game/music.h"
+#include "game/objects/creatures/big_spider.h"
 #include "game/output.h"
 #include "game/phase.h"
 #include "game/random.h"
@@ -25,6 +26,7 @@
 #include <libtrx/enum_map.h>
 #include <libtrx/game/game_buf.h>
 #include <libtrx/game/game_string_table.h>
+#include <libtrx/game/objects/creatures/bear.h>
 #include <libtrx/game/shell.h>
 #include <libtrx/game/ui/common.h>
 #include <libtrx/memory.h>
@@ -376,6 +378,12 @@ static void M_HandleConfigChange(const EVENT *const event, void *const data)
 void Shell_Main(void)
 {
     M_ParseArgs(&m_Args);
+
+    if (m_Args.mod == M_MOD_CUSTOM_LEVEL) {
+        Bear_Setup(Object_Get(O_BEAR));
+    } else {
+        BigSpider_Setup(Object_Get(O_BIG_SPIDER));
+    }
 
     GameString_Init();
     EnumMap_Init();

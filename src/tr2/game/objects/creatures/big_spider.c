@@ -1,3 +1,5 @@
+#include "game/objects/creatures/big_spider.h"
+
 #include "game/creature.h"
 #include "game/lara/control.h"
 #include "game/objects/common.h"
@@ -33,10 +35,9 @@ static const BITE m_SpiderBite = {
     .mesh_num = 1,
 };
 
-static void M_Setup(OBJECT *obj);
 static void M_Control(int16_t item_num);
 
-static void M_Setup(OBJECT *const obj)
+void BigSpider_Setup(OBJECT *const obj)
 {
     if (!obj->loaded) {
         return;
@@ -132,4 +133,4 @@ static void M_Control(const int16_t item_num)
     Creature_Animate(item_num, angle, tilt);
 }
 
-REGISTER_OBJECT(O_BIG_SPIDER, M_Setup)
+REGISTER_OBJECT(O_BIG_SPIDER, BigSpider_Setup)

@@ -1,3 +1,5 @@
+#include "game/objects/creatures/bear.h"
+
 #include "config.h"
 #include "game/creature.h"
 #include "game/items.h"
@@ -45,10 +47,9 @@ static BITE m_BearHeadBite = { 0, 96, 335, 14 };
 static BITE m_BearHeadBite = { .pos = { 0, 96, 335 }, .mesh_num = 14 };
 #endif
 
-static void M_Setup(OBJECT *obj);
 static void M_Control(int16_t item_num);
 
-static void M_Setup(OBJECT *const obj)
+void Bear_Setup(OBJECT *const obj)
 {
     if (!obj->loaded) {
         return;
@@ -249,6 +250,4 @@ static void M_Control(const int16_t item_num)
     Creature_Animate(item_num, angle, 0);
 }
 
-#if TR_VERSION == 1
-REGISTER_OBJECT(O_BEAR, M_Setup)
-#endif
+REGISTER_OBJECT(O_BEAR, Bear_Setup)
